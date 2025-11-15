@@ -49,5 +49,11 @@ pub fn send_break_reminder(
     }
 
     notification.show()?;
+
+    // Record the timestamp of this notification
+    if let Err(e) = crate::timestamp::record_notification() {
+        eprintln!("Warning: Failed to record notification timestamp: {e}");
+    }
+
     Ok(())
 }

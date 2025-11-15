@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,6 +6,9 @@ use std::process::Command;
 
 #[cfg(target_os = "linux")]
 use crate::time::parse_next_run_timestamp;
+
+#[cfg(target_os = "macos")]
+use crate::{config::Config, timestamp};
 
 #[cfg(target_os = "macos")]
 const SERVICE_LABEL: &str = "com.michalczmiel.szmer";
@@ -282,12 +285,32 @@ fn get_scheduler_status_impl() -> Result<SchedulerStatus, Box<dyn std::error::Er
 
     let is_running = output.status.success();
 
-    // Note: launchd with StartInterval doesn't expose next run time easily
-    // We return None for next_run on macOS
+    // Calculate next run time based on last notification timestamp
+    let next_run = if is_running {
+        calculate_next_run_macos()?
+    } else {
+        None
+    };
+
     Ok(SchedulerStatus {
         is_running,
-        next_run: None,
+        next_run,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn calculate_next_run_macos() -> Result<Option<DateTime<Local>>, Box<dyn std::error::Error>> {
+    let last_notification = timestamp::get_last_notification()?;
+
+    match last_notification {
+        Some(last_time) => {
+            let config = Config::load()?;
+            let interval = Duration::seconds(config.interval_seconds as i64);
+            let next_time = last_time + interval;
+            Ok(Some(next_time))
+        }
+        None => Ok(None),
+    }
 }
 
 #[cfg(target_os = "linux")]

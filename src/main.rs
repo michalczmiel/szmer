@@ -3,6 +3,7 @@ mod notification;
 mod schedule;
 mod sound;
 mod time;
+mod timestamp;
 mod timewarrior;
 
 use clap::{Parser, Subcommand};
@@ -309,7 +310,7 @@ fn print_next_break(
         }
         None => {
             println!(
-                "Next break:   Every {} (exact time unavailable on macOS)",
+                "Next break:   Every {} (no notification sent yet)",
                 format_interval(config.interval_seconds)
             );
         }
