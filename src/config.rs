@@ -5,14 +5,29 @@ use std::path::PathBuf;
 const CONFIG_DIR: &str = ".config/szmer";
 const CONFIG_FILE: &str = "config.json";
 
+/// Configuration for Timewarrior integration
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TimewarriorConfig {
+    /// Whether Timewarrior integration is enabled
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// Main application configuration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
+    /// Notification sound name (None = system default)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_sound: Option<String>,
+    /// Whether notifications are paused
     #[serde(default)]
     pub paused: bool,
+    /// Break reminder interval in seconds
     #[serde(default = "default_interval")]
     pub interval_seconds: u64,
+    /// Timewarrior integration settings
+    #[serde(default)]
+    pub timewarrior: TimewarriorConfig,
 }
 
 fn default_interval() -> u64 {
@@ -25,6 +40,7 @@ impl Default for Config {
             notification_sound: None,
             paused: false,
             interval_seconds: default_interval(),
+            timewarrior: TimewarriorConfig::default(),
         }
     }
 }

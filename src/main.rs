@@ -3,10 +3,11 @@ mod notification;
 mod schedule;
 mod sound;
 mod time;
+mod timewarrior;
 
 use clap::{Parser, Subcommand};
 use config::Config;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Input, Select};
 use time::{format_interval, format_time_until};
 
 #[derive(Parser)]
@@ -31,6 +32,24 @@ enum Commands {
     Resume,
     /// Show current status and next notification time
     Status,
+    /// Manage configuration settings
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show current configuration
+    Show,
+    /// Set configuration values
+    Set {
+        /// Configuration key (e.g., "timewarrior.enabled")
+        key: String,
+        /// Configuration value (e.g., "true", "false")
+        value: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Stop => stop(),
         Commands::Resume => resume(),
         Commands::Status => status(),
+        Commands::Config { action } => config(action),
     }
 }
 
@@ -53,7 +73,12 @@ fn notify() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    notification::send_break_reminder(config.notification_sound)
+    // Check timewarrior integration - skip notification if not tracking
+    if !timewarrior::should_send_notification(&config.timewarrior) {
+        return Err("Skipping notification: no active timewarrior session".into());
+    }
+
+    notification::send_break_reminder(config.notification_sound, None)
 }
 
 fn install() -> Result<(), Box<dyn std::error::Error>> {
@@ -72,10 +97,13 @@ fn install() -> Result<(), Box<dyn std::error::Error>> {
 
     let selected_sound = select_notification_sound()?;
 
+    let timewarrior_config = configure_timewarrior()?;
+
     let config = Config {
         notification_sound: selected_sound.clone(),
         paused: false,
         interval_seconds,
+        timewarrior: timewarrior_config,
     };
     config.save()?;
 
@@ -83,9 +111,7 @@ fn install() -> Result<(), Box<dyn std::error::Error>> {
 
     schedule::install(interval_seconds)?;
 
-    if should_test_notification()? {
-        test_notification(&config)?;
-    }
+    println!("\nTip: You can test the notification by running: szmer notify");
 
     Ok(())
 }
@@ -152,28 +178,15 @@ fn select_notification_sound() -> Result<Option<String>, Box<dyn std::error::Err
     Ok(None)
 }
 
+fn configure_timewarrior() -> Result<config::TimewarriorConfig, Box<dyn std::error::Error>> {
+    timewarrior::prompt_for_configuration()
+}
+
 fn print_sound_confirmation(sound: &Option<String>) {
     match sound {
         Some(s) => println!("\n✓ Configuration saved with sound: {s}"),
         None => println!("\n✓ Configuration saved"),
     }
-}
-
-fn should_test_notification() -> Result<bool, Box<dyn std::error::Error>> {
-    Confirm::new()
-        .with_prompt("Would you like to test the notification now?")
-        .default(true)
-        .interact()
-        .map_err(Into::into)
-}
-
-fn test_notification(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\nSending test notification...");
-    match notification::send_break_reminder(config.notification_sound.clone()) {
-        Ok(_) => println!("✓ Test notification sent!"),
-        Err(e) => eprintln!("Failed to send test notification: {e}"),
-    }
-    Ok(())
 }
 
 fn uninstall() -> Result<(), Box<dyn std::error::Error>> {
@@ -300,6 +313,82 @@ fn print_next_break(
                 format_interval(config.interval_seconds)
             );
         }
+    }
+}
+
+fn config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        ConfigAction::Show => show_config(),
+        ConfigAction::Set { key, value } => set_config(&key, &value),
+    }
+}
+
+fn show_config() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::load()?;
+
+    println!("\nCurrent Configuration");
+    println!("━━━━━━━━━━━━━━━━━━━━━");
+    println!("\nSound:                 {}",
+        config.notification_sound.as_deref().unwrap_or("(system default)"));
+    println!("Paused:                {}", config.paused);
+    println!("Interval:              {}", format_interval(config.interval_seconds));
+
+    println!("\nTimewarrior Integration:");
+    println!("  Enabled:             {}", config.timewarrior.enabled);
+
+    if config.timewarrior.enabled {
+        let status = timewarrior::get_status();
+
+        if status.is_installed {
+            if let Some(path) = status.binary_path {
+                println!("  Binary path:         {}", path.display());
+            }
+
+            // Check current status
+            match status.is_tracking {
+                Some(true) => println!("  Current status:      ✓ Active session (will notify)"),
+                Some(false) => println!("  Current status:      ○ No active session (will skip)"),
+                None => println!("  Current status:      ⚠ Error checking status"),
+            }
+        } else {
+            println!("  Status:              ⚠ Timewarrior not found in PATH");
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+fn set_config(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = Config::load()?;
+
+    match key {
+        "timewarrior.enabled" => {
+            let enabled = parse_bool(value)?;
+
+            if enabled && !timewarrior::is_installed() {
+                return Err("Cannot enable timewarrior integration: timewarrior not found in PATH".into());
+            }
+
+            config.timewarrior.enabled = enabled;
+            println!("✓ Timewarrior integration {}", if enabled { "enabled (will skip notifications when not tracking)" } else { "disabled" });
+        }
+        _ => {
+            return Err(format!(
+                "Unknown configuration key: '{key}'. Available keys:\n  - timewarrior.enabled"
+            ).into());
+        }
+    }
+
+    config.save()?;
+    Ok(())
+}
+
+fn parse_bool(value: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    match value.to_lowercase().as_str() {
+        "true" | "1" | "yes" | "y" => Ok(true),
+        "false" | "0" | "no" | "n" => Ok(false),
+        _ => Err(format!("Invalid boolean value: '{value}'. Use 'true' or 'false'").into()),
     }
 }
 

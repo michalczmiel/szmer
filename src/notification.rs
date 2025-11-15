@@ -22,18 +22,27 @@ const WELLNESS_TIPS: &[&str] = &[
 ];
 
 /// Send a break reminder notification with a random wellness tip
+///
+/// # Arguments
+/// * `notification_sound` - Optional sound to play with the notification
+/// * `custom_message` - Optional custom message to display instead of a random tip
 pub fn send_break_reminder(
     notification_sound: Option<String>,
+    custom_message: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tip = WELLNESS_TIPS
-        .choose(&mut rand::thread_rng())
-        .expect("WELLNESS_TIPS is not empty");
+    let body = if let Some(message) = custom_message {
+        message
+    } else {
+        WELLNESS_TIPS
+            .choose(&mut rand::thread_rng())
+            .expect("WELLNESS_TIPS is not empty")
+    };
 
     let mut notification = Notification::new();
     notification
         .summary("Time for a Break!")
-        .body(tip)
-        .timeout(200);
+        .body(body)
+        .timeout(5000); // 5 seconds
 
     if let Some(sound) = notification_sound {
         notification.sound_name(&sound);
